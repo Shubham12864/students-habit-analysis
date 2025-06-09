@@ -20,8 +20,16 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from data_analysis import load_data, clean_data
-import visualizations as viz
+try:
+    from data_analysis import load_data, clean_data
+    import visualizations as viz
+except ImportError:
+    # Fallback functions if modules don't exist
+    def load_data(path):
+        return pd.read_csv(path)
+    
+    def clean_data(df):
+        return df.dropna()
 
 warnings.filterwarnings('ignore')
 
@@ -85,7 +93,7 @@ class StudentHabitsEDA:
         print(f"\n🔍 Missing values: {missing_values.sum()}")
         if missing_values.sum() > 0:
             print(missing_values)
-        
+            
     def correlation_analysis(self):
         """Perform correlation analysis"""
         print("\n" + "="*60)

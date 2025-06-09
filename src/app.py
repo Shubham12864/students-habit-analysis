@@ -7,14 +7,22 @@ from plotly.subplots import make_subplots
 from scipy import stats
 import sys
 import os
-
-# Add src directory to path for imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from data_analysis import load_data, clean_data, analyze_data, correlation_matrix
-from visualizations import *
 import warnings
+
 warnings.filterwarnings('ignore')
+
+# Add current directory to path for imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(current_dir)
+sys.path.append(parent_dir)
+
+try:
+    from data_analysis import load_data, clean_data
+    from visualizations import *
+except ImportError:
+    # Fallback imports if modules don't exist
+    pass
 
 # Page config
 st.set_page_config(
@@ -23,6 +31,76 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+def load_data_fallback(file_path):
+    """Fallback data loading function"""
+    try:
+        return pd.read_csv(file_path)
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return None
+
+def clean_data_fallback(df):
+    """Fallback data cleaning function"""
+    if df is None:
+        return None
+    # Basic cleaning
+    df = df.dropna()
+    return df
+
+def create_correlation_heatmap(data):
+    """Create correlation heatmap"""
+    corr_matrix = data.corr()
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.columns,
+        colorscale='RdBu',
+        zmid=0,
+        text=np.round(corr_matrix.values, 3),
+        texttemplate="%{text}",
+        textfont={"size": 12},
+        hoverongaps=False
+    ))
+    fig.update_layout(
+        title='Correlation Heatmap of Student Habits and Academic Performance',
+        width=700,
+        height=600
+    )
+    return fig
+
+def create_scatter_plot(data, x_col, y_col, color_col=None, size_col=None):
+    """Create scatter plot"""
+    fig = px.scatter(
+        data, 
+        x=x_col, 
+        y=y_col,
+        color=color_col,
+        size=size_col,
+        title=f'{x_col} vs {y_col}',
+        hover_data=data.columns.tolist()
+    )
+    return fig
+
+def create_histogram(data, column):
+    """Create histogram with KDE"""
+    fig = px.histogram(
+        data, 
+        x=column, 
+        marginal="kde",
+        title=f'Distribution of {column}',
+        nbins=20
+    )
+    return fig
+
+def create_box_plot(data, column):
+    """Create box plot"""
+    fig = px.box(
+        data, 
+        y=column,
+        title=f'Box Plot of {column}'
+    )
+    return fig
 
 def main():
     # Custom CSS for better styling
@@ -46,6 +124,12 @@ def main():
             border-radius: 0.5rem;
             margin: 1rem 0;
         }
+        .stSelectbox > div > div > select {
+            background-color: #ffffff;
+        }
+        .stSlider > div > div > div > div {
+            background: linear-gradient(90deg, #3498db, #2980b9);
+        }
     </style>
     """, unsafe_allow_html=True)
     
@@ -62,15 +146,52 @@ def main():
     
     # Load and clean data
     try:
-        # Use the correct path that matches your file structure
-        data = load_data("data/Study_Hours_per_Week,Sleep_Hours.csv")
-        cleaned_data = clean_data(data)
+        # Try different paths to find the data file
+        possible_paths = [
+            "data/Study_Hours_per_Week,Sleep_Hours.csv",
+            "../data/Study_Hours_per_Week,Sleep_Hours.csv",
+            os.path.join(parent_dir, "data", "Study_Hours_per_Week,Sleep_Hours.csv"),
+            os.path.join(os.path.dirname(parent_dir), "data", "Study_Hours_per_Week,Sleep_Hours.csv")
+        ]
+        
+        data = None
+        data_path = None
+        
+        for path in possible_paths:
+            try:
+                # Try custom load_data function first, then fallback
+                try:
+                    data = load_data(path)
+                except:
+                    data = load_data_fallback(path)
+                    
+                if data is not None:
+                    data_path = path
+                    st.sidebar.success(f"✅ Data loaded from: {path}")
+                    break
+            except:
+                continue
+        
+        if data is None:
+            st.error("❌ Dataset not found! Please ensure the CSV file is in the data/ directory.")
+            st.stop()
+        
+        # Clean data
+        try:
+            cleaned_data = clean_data(data)
+        except:
+            cleaned_data = clean_data_fallback(data)
+        
+        if cleaned_data is None:
+            st.error("❌ Failed to clean data!")
+            st.stop()
         
         # Sidebar options
         analysis_type = st.sidebar.selectbox(
             "Choose Analysis Type:",
             ["Overview", "Correlation Analysis", "Distribution Analysis", 
-             "Relationship Analysis", "Statistical Tests", "Predictive Insights"]
+             "Relationship Analysis", "Statistical Tests", "Predictive Insights",
+             "Complete EDA Report"]
         )
         
         show_raw_data = st.sidebar.checkbox("Show Raw Data")
@@ -93,13 +214,12 @@ def main():
             show_statistical_tests(cleaned_data)
         elif analysis_type == "Predictive Insights":
             show_predictive_insights(cleaned_data)
+        elif analysis_type == "Complete EDA Report":
+            show_complete_eda_report(cleaned_data)
             
-    except FileNotFoundError as e:
-        st.error("❌ Dataset not found! Please ensure the CSV file is in the correct location.")
-        st.info("Expected path: data/Study_Hours_per_Week,Sleep_Hours.csv")
-        st.error(f"Error details: {str(e)}")
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
+        st.info("Please check that all required files are in place and dependencies are installed.")
 
 def show_overview(data):
     st.header("📈 Dataset Overview")
@@ -123,23 +243,11 @@ def show_overview(data):
     col1, col2 = st.columns(2)
     
     with col1:
-        fig = create_gpa_distribution(data)
+        fig = create_histogram(data, 'GPA')
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        fig = create_study_hours_distribution(data)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Additional overview charts
-    st.subheader("📊 Overview Charts")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig = create_sleep_distribution(data)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        fig = create_attendance_distribution(data)
+        fig = create_histogram(data, 'Study_Hours_per_Week')
         st.plotly_chart(fig, use_container_width=True)
 
 def show_correlation_analysis(data):
@@ -178,7 +286,7 @@ def show_distribution_analysis(data):
     col1, col2 = st.columns(2)
     
     with col1:
-        fig = create_histogram_with_kde(data, selected_var)
+        fig = create_histogram(data, selected_var)
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
@@ -203,29 +311,32 @@ def show_relationship_analysis(data):
     
     # Scatter plots
     st.subheader("Study Hours vs GPA")
-    fig = create_study_vs_gpa_scatter(data)
+    fig = create_scatter_plot(data, 'Study_Hours_per_Week', 'GPA', 'Attendance_Percentage', 'Sleep_Hours_per_Night')
     st.plotly_chart(fig, use_container_width=True)
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("Sleep Hours vs GPA")
-        fig = create_sleep_vs_gpa_scatter(data)
+        fig = create_scatter_plot(data, 'Sleep_Hours_per_Night', 'GPA')
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
         st.subheader("Screen Time vs GPA")
-        fig = create_screen_time_vs_gpa_scatter(data)
+        fig = create_scatter_plot(data, 'Screen_Time_per_Day', 'GPA')
         st.plotly_chart(fig, use_container_width=True)
     
     # 3D scatter plot
     st.subheader("3D Relationship: Study Hours, Sleep Hours, and GPA")
-    fig = create_3d_scatter(data)
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Multi-variable analysis
-    st.subheader("Multi-Variable Analysis")
-    fig = create_multi_variable_analysis(data)
+    fig = px.scatter_3d(
+        data, 
+        x='Study_Hours_per_Week', 
+        y='Sleep_Hours_per_Night', 
+        z='GPA',
+        color='Attendance_Percentage',
+        size='Screen_Time_per_Day',
+        title='3D Relationship Analysis'
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 def show_statistical_tests(data):
@@ -267,7 +378,6 @@ def show_predictive_insights(data):
     st.header("🔮 Predictive Insights")
     
     try:
-        # Simple linear regression insights
         from sklearn.linear_model import LinearRegression
         from sklearn.model_selection import train_test_split
         from sklearn.metrics import r2_score, mean_squared_error
@@ -340,6 +450,125 @@ def show_predictive_insights(data):
             
     except ImportError:
         st.error("Scikit-learn is required for predictive analysis. Please install it using: pip install scikit-learn")
+
+def show_complete_eda_report(data):
+    """Show complete EDA report"""
+    st.header("📊 Complete Exploratory Data Analysis Report")
+    
+    with st.spinner("🔄 Generating comprehensive analysis..."):
+        try:
+            # Basic Information
+            st.subheader("📋 Dataset Overview")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Students", len(data))
+            with col2:
+                st.metric("Variables", len(data.columns))
+            with col3:
+                st.metric("Average GPA", f"{data['GPA'].mean():.2f}")
+            with col4:
+                st.metric("Missing Values", data.isnull().sum().sum())
+            
+            # Show first few rows
+            st.subheader("🔍 Sample Data")
+            st.dataframe(data.head())
+            
+            # Correlation Analysis
+            st.subheader("🔗 Correlation Analysis")
+            correlation_matrix = data.corr()
+            gpa_correlations = correlation_matrix['GPA'].sort_values(ascending=False)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Correlations with GPA:**")
+                for var, corr in gpa_correlations.items():
+                    if var != 'GPA':
+                        strength = "Strong" if abs(corr) > 0.5 else "Moderate" if abs(corr) > 0.3 else "Weak"
+                        direction = "↗️" if corr > 0 else "↘️"
+                        st.write(f"{direction} {var}: {corr:.3f} ({strength})")
+            
+            with col2:
+                # Correlation heatmap
+                fig = create_correlation_heatmap(data)
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Performance Analysis
+            st.subheader("🎯 Performance Analysis")
+            
+            # Create performance categories
+            data_copy = data.copy()
+            data_copy['Performance_Category'] = pd.cut(data_copy['GPA'], 
+                                                     bins=[0, 2.5, 3.0, 3.5, 4.0], 
+                                                     labels=['Low', 'Medium', 'High', 'Excellent'])
+            
+            performance_counts = data_copy['Performance_Category'].value_counts()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # Performance distribution
+                fig = px.pie(values=performance_counts.values, names=performance_counts.index,
+                           title="Performance Category Distribution")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Performance comparison
+                high_performers = data[data['GPA'] >= 3.5]
+                low_performers = data[data['GPA'] < 2.5]
+                
+                if len(high_performers) > 0 and len(low_performers) > 0:
+                    st.write("**High vs Low Performers:**")
+                    variables = ['Study_Hours_per_Week', 'Sleep_Hours_per_Night', 
+                               'Screen_Time_per_Day', 'Attendance_Percentage']
+                    
+                    comparison_data = []
+                    for var in variables:
+                        high_avg = high_performers[var].mean()
+                        low_avg = low_performers[var].mean()
+                        comparison_data.append({
+                            'Variable': var.replace('_', ' '),
+                            'High Performers': f"{high_avg:.1f}",
+                            'Low Performers': f"{low_avg:.1f}",
+                            'Difference': f"{high_avg - low_avg:+.1f}"
+                        })
+                    
+                    st.dataframe(pd.DataFrame(comparison_data))
+            
+            # Key Insights
+            st.subheader("💡 Key Insights & Recommendations")
+            
+            # Find strongest factor
+            gpa_corr_abs = correlation_matrix['GPA'].drop('GPA').abs().sort_values(ascending=False)
+            strongest_factor = gpa_corr_abs.index[0]
+            strongest_corr = correlation_matrix['GPA'][strongest_factor]
+            
+            insights = []
+            insights.append(f"🏆 **{strongest_factor.replace('_', ' ')}** has the strongest relationship with GPA (r = {strongest_corr:.3f})")
+            
+            screen_corr = correlation_matrix['GPA']['Screen_Time_per_Day']
+            if screen_corr < -0.2:
+                insights.append(f"📱 Screen time negatively impacts GPA (r = {screen_corr:.3f})")
+            
+            sleep_corr = correlation_matrix['GPA']['Sleep_Hours_per_Night']
+            if sleep_corr > 0.2:
+                insights.append(f"😴 Adequate sleep positively impacts GPA (r = {sleep_corr:.3f})")
+            
+            for insight in insights:
+                st.write(insight)
+            
+            # Recommendations
+            st.subheader("📋 Recommendations")
+            if len(high_performers) > 0:
+                st.success("**Success Formula (based on high performers):**")
+                st.write(f"• 📖 Study: {high_performers['Study_Hours_per_Week'].mean():.1f}+ hours/week")
+                st.write(f"• 😴 Sleep: {high_performers['Sleep_Hours_per_Night'].mean():.1f}+ hours/night")
+                st.write(f"• 🎯 Attendance: {high_performers['Attendance_Percentage'].mean():.1f}%+")
+                st.write(f"• 📱 Screen Time: ≤{high_performers['Screen_Time_per_Day'].mean():.1f} hours/day")
+            
+            st.success("✅ Complete EDA analysis generated successfully!")
+            
+        except Exception as e:
+            st.error(f"Error generating EDA report: {str(e)}")
 
 if __name__ == "__main__":
     main()
